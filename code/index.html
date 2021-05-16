@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Viz</title>
+    <script src="https://unpkg.com/d3@5.12.0/dist/d3.js"></script>
+    <link href="https://unpkg.com/c3@0.7.11/c3.css" rel="stylesheet">
+    <script src="https://unpkg.com/c3@0.7.11/c3.js"></script>
+    <script src="main.js"></script>
+
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/noUiSlider/14.6.3/nouislider.min.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/noUiSlider/14.6.3/nouislider.min.js"></script>
+</head>
+
+<body style="font-family: 'Courier New', Courier, monospace;">
+    <h1>Data visualization</h1>
+
+    <div id="slider1"></div>
+    <p>min:<span id="minValue"></span> ton per person max:<span id="maxValue"></span>ton per person</p>
+    <br><br>
+    <div id="slider2"></div>
+    <p>step for each group:<span id="stepValue"></span></p>
+    <br>
+    <div id="chart"></div>
+    <script>
+        //https://refreshless.com/nouislider/events-callbacks/
+        noUiSlider.create(slider1, {
+            start: [1, 2],
+            connect: true,
+            range: {
+                'min': 0,
+                'max': 33.9422578
+            }
+        });
+
+        noUiSlider.create(slider2, {
+            start: 1,
+            connect: true,
+            range: {
+                'min': 0.05,
+                'max': 5
+            }
+        });
+
+        slider1.noUiSlider.on('slide', move1);
+        slider2.noUiSlider.on('slide', move2);
+
+        function cumsum(values, valueof) {
+            var sum = 0, index = 0;
+            return Float64Array.from(values, valueof === undefined
+                ? v => (sum += +v || 0)
+                : v => (sum += +valueof(v, index++, values) || 0));
+        }
+
+
+        var parse_time = d3.timeParse("%Y-%m-%d");
+        let slidervalue = 1;
+        let dataloaded = false;
+        let data = null;
+
+        let min = null;
+        let max = null;
+        function move1(value) {
+            min = value[0];
+            max = value[1];
+            document.getElementById("minValue").innerHTML = min;
+            document.getElementById("maxValue").innerHTML = max;
+            if (dataloaded) {
+                calculate(slidervalue, min, max);
+            }
+            else {
+                console.log("data is not loaded yet")
+            }
+        }
+
+        function move2(value) {
+            slidervalue = value
+            document.getElementById("stepValue").innerHTML = slidervalue;
+
+            if (dataloaded) {
+                calculate(slidervalue, min, max);
+            }
+            else {
+                console.log("data is not loaded yet")
+            }
+        }
+
+
+        Promise.all([
+
+            d3.tsv("../data/missions.tsv", d => ({
+                mission_id: +d['#mission_id'],
+                user_id: +d.user_id,
+                place_id: +d.place_id,
+                date: parse_time(d.date),
+                duration: +d.duration,
+                mode: d.mode,
+                co2: +d.co2,
+            })),
+            d3.tsv("../data/users.tsv", d => ({
+                user_id: +d['#user_id'],
+                name: d.name,
+                house: d.house,
+                institution: d.institution,
+            })),
+            d3.tsv("../data/places.tsv", d => ({
+                place_id: +d['#place_id'],
+                distance: +d.distance,
+                country: d.country,
+            })),
+            d3.tsv("../data/countries.tsv", d => ({
+                alpha: d['#alpha2'],
+                country: d.country,
+                continent: d.continent,
+            })),
+
+
+        ]).then(function (dat) {
+            console.log("data loaded !")
+            data = dat;
+            dataloaded = true;
+            calculate(slidervalue);
+        });
+
+        function calculate(step, min, max) {
+            let missions = data[0];
+            let users = Object.fromEntries(data[1].map(u => [u.user_id, u]));
+            let places = Object.fromEntries(data[2].map(p => [p.place_id, p]));
+            let countries = Object.fromEntries(data[3].map(c => [c.alpha, c]));
+            /*   console.log('missions')
+               console.log(missions)
+               console.log('users')
+               console.log(users)
+               console.log('places')
+               console.log(places)
+               console.log('countries')
+               console.log(countries)*/
+
+
+            let emissions = Object.fromEntries(Object.keys(users).map(u_id => [u_id, 0]));
+            let emissions_car = Object.fromEntries(Object.keys(users).map(u_id => [u_id, 0]));
+            let emissions_train = Object.fromEntries(Object.keys(users).map(u_id => [u_id, 0]));
+            let emissions_plane = Object.fromEntries(Object.keys(users).map(u_id => [u_id, 0]));
+            let emissions_others = Object.fromEntries(Object.keys(users).map(u_id => [u_id, 0]));
+            for (let mission of missions) {
+                let tonsOfCo2 = mission.co2 * places[mission.place_id].distance / 1000;
+                emissions[mission.user_id] += tonsOfCo2; // tons of CO2
+                if (mission.mode == 'car') {
+                    emissions_car[mission.user_id] += tonsOfCo2;
+                }
+                if (mission.mode == 'train') {
+                    emissions_train[mission.user_id] += tonsOfCo2;
+                }
+                if (mission.mode == 'plane') {
+                    emissions_plane[mission.user_id] += tonsOfCo2;
+                }
+                if (mission.mode == 'other') {
+                    emissions_others[mission.user_id] += tonsOfCo2;
+                }
+            }
+            emissions = Object.values(emissions); //transforms object into array
+            // console.log(emissions)
+            emissions_car = Object.values(emissions_car);
+            // console.log(emissions_car)
+            emissions_train = Object.values(emissions_train);
+            // console.log(emissions_train)
+            emissions_plane = Object.values(emissions_plane);
+            // console.log(emissions_plane)
+            emissions_others = Object.values(emissions_others);
+            // console.log(emissions_others)
+
+
+            if (min == null) {
+                min = Math.min.apply(Math, emissions);
+            }
+            if (max == null) {
+                max = Math.max.apply(Math, emissions);
+            }
+            slider1.noUiSlider.set([min, max]);
+            console.log(min + " " + max)
+
+            let finalList = [];
+
+            let nbstep = Math.trunc((max - min) / step) + 1;
+            console.log('nb steps : ' + nbstep)
+            for (let i = 0; i < nbstep; i++) {
+                finalList[i] = []
+            }
+            //list of lists of user ids base on there emmisions
+            console.log('final list')
+            console.log(finalList);
+
+            for (let i = 0; i < emissions.length; i++) {
+                const element = emissions[i];
+                if (element >= min && element <= max) {
+                    let idx = Math.trunc((element - min) / step);
+                    finalList[idx].push(i)
+                }
+            }
+
+            let group_emission = new Array(nbstep).fill(0);
+            let group_emission_cars = new Array(nbstep).fill(0);
+            let group_emission_planes = new Array(nbstep).fill(0);
+            let group_emission_trains = new Array(nbstep).fill(0);
+            let group_emission_other = new Array(nbstep).fill(0);
+
+            for (let i = 0; i < finalList.length; i++) {
+                for (let j = 0; j < finalList[i].length; j++) {
+                    const element = finalList[i][j];
+                    group_emission[i] += emissions[element];
+                    group_emission_cars[i] += emissions_car[element];
+                    group_emission_other[i] += emissions_others[element];
+                    group_emission_planes[i] += emissions_plane[element];
+                    group_emission_trains[i] += emissions_train[element];
+
+                    // var l = group_emission_cars[i]+group_emission_other[i]+group_emission_planes[i]+group_emission_trains[i];
+                    // var t = group_emission[i];
+                    // if(l == t){
+                    //     console.log('yay')
+                    // }
+                    // else{
+                    //     console.log('nay '+ (t-l))
+                    // }
+                }
+            }
+
+            console.log('group emmisions')
+            console.log(group_emission);
+
+            console.log('group emmisions cars')
+            console.log(group_emission_cars);
+
+
+            let group_emission_other_ratio = new Array(nbstep).fill(0);
+            let group_emission_cars_ratio = new Array(nbstep).fill(0);
+            let group_emission_planes_ratio = new Array(nbstep).fill(0);
+            let group_emission_trains_ratio = new Array(nbstep).fill(0);
+
+            let total = ['total']
+            let median = ['total_x']
+
+            for (let i = 0; i < finalList.length; i++) {
+                total.push(finalList[i].length)
+                var l = step * i + 0.5 * step + parseInt(min); 
+                console.log(l+ " " +i);
+                median.push(l)
+            }
+
+            let data_test = ['total'];
+            for (var i = 1; i < total.length; i++) {
+                if (total[i] != 0) {
+                    data_test[i] = Math.log(total[i] + 1) / Math.LN10;
+                }
+                else {
+                    data_test[i] = total[i];
+                }
+            }
+
+            for (let i = 0; i < group_emission.length; i++) {
+                let c = (group_emission_cars[i] / group_emission[i]) * data_test[i+1];
+                group_emission_cars_ratio[i] = c;
+                let p = (group_emission_planes[i] / group_emission[i]) * data_test[i+1];
+                group_emission_planes_ratio[i] = p;
+                let o = (group_emission_other[i] / group_emission[i]) * data_test[i+1];
+                group_emission_other_ratio[i] = o;
+                let t = (group_emission_trains[i] / group_emission[i]) * data_test[i+1];
+                group_emission_trains_ratio[i] = t;
+            }
+
+            group_emission_cars_ratio.unshift('emission by car')
+            group_emission_other_ratio.unshift('emission by other')
+            group_emission_planes_ratio.unshift('emission by planes')
+            group_emission_trains_ratio.unshift('emission by trains')
+
+            // let total = ['total']
+            // let median = ['total_x']
+
+            // for (let i = 0; i < finalList.length; i++) {
+            //     total.push(finalList[i].length)
+            //     var l = step * i + 0.5 * step + parseInt(min); 
+            //     console.log(l);
+            //     median.push(l)
+            // }
+
+            // data_test = ['total'];
+            // for (var i = 1; i < total.length; i++) {
+            //     if (total[i] != 0) {
+            //         data_test[i] = Math.log(total[i] + 1) / Math.LN10;
+            //     }
+            //     else {
+            //         data_test[i] = total[i];
+            //     }
+            // }
+            //TOOD : put log on all the lists
+
+
+            var chart = c3.generate({
+                size: {
+                    height: 550
+                },
+                data: {
+                    x: 'total_x',
+                    columns: [
+                        median,
+                        //total,
+                        //data_test,
+                        group_emission_cars_ratio,
+                        group_emission_planes_ratio,
+                        group_emission_trains_ratio,
+                        group_emission_other_ratio
+                    ],
+                    type: 'bar',
+                    groups: [
+                        ['emission by car', 'emission by planes', 'emission by trains', 'emission by other']
+                    ]
+                },
+                bar: {
+                    space: -0.6
+                },
+                axis: {
+                    x: {
+                        label: 'Median of tons of co2 for emmision category (total emmision of all user per category)'
+                    },
+                    y: {
+                        label: 'Number of user (log10)'
+                    }
+                },
+                grid: {
+                    y: {
+                        tick: {
+                            format: function (d) { return Math.pow(10, d).toFixed(10); }
+                        }
+                    }
+                }
+            });
+        }
+
+    </script>
+</body>
+
+</html>
